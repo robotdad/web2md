@@ -19,7 +19,7 @@ def clean_text(text):
     if not text:
         return ''
     # Remove social media related text
-    text = re.sub(r'Copy link(?:Facebook|Email|Notes|More|\s)*', '', text)
+    text = re.sub(r'(?:Share this post|Copy link|Facebook|Email|Notes|More)\s*', '', text)
     
     # Remove audio player text
     text = re.sub(r'Audio playback is not supported.*upgrade\.', '', text)
@@ -44,6 +44,11 @@ def should_skip_element(tag):
     # Skip social sharing buttons and UI elements
     classes = tag.get('class', [])
     if any(c in str(classes) for c in ['share-button', 'social-links', 'player-controls']):
+        return True
+        
+    # Skip elements with social media related text
+    text = tag.get_text(strip=True)
+    if text and text in ['Share this post', 'FacebookEmailNotesMore']:
         return True
         
     return False
