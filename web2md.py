@@ -14,7 +14,53 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 BASE_OUTPUT_DIR = os.getenv('BASE_OUTPUT_DIR', os.path.join(os.getcwd(), 'output'))
 logging.debug(f"BASE_OUTPUT_DIR: {BASE_OUTPUT_DIR}")
 
-def clean_text(text):
+def is_muddled_transcript(text):
+    """Detect if text is likely a muddled transcript section."""
+    if not text or len(text) < 200:  # Lower threshold to catch smaller blocks
+        return False
+    
+    # Look for classic signs of transcript mangling
+    has_unicode = any(ord(c) > 127 for c in text)
+    has_runs = bool(re.search(r'\w{30,}', text))  # Long runs of text without spaces
+    has_weird_spaces = '.' in text and not bool(re.search(r'\. [A-Z]', text))  # Missing sentence spacing
+    
+    # Look for price/number patterns that often get mangled
+    has_price_numbers = bool(re.search(r'\d+(?:[kKmM]|\s*dollars?|\s*bucks?)', text)) 
+    
+    return (has_unicode or has_runs or (has_weird_spaces and has_price_numbers))
+
+def clean_muddled_text(text):
+    """Clean up muddled transcript text."""
+    if not text:
+        return text
+    
+    # Handle unicode chars that often get mangled
+    text = text.replace('′', "'")  # Smart quotes
+    text = re.sub(r'[\u0080-\uffff]', '', text)  # Remove other unicode
+    
+    # Fix runs of text without spaces
+    text = re.sub(r'([a-z])([A-Z])', r'\1. \2', text)  # Add periods between sentence case changes
+    text = re.sub(r'([.!?])([A-Za-z])', r'\1 \2', text)  # Add space after punctuation
+    
+    # Clean up repeated fragments (common in transcript mangling)
+    fragments = text.split('.')
+    seen = set()
+    unique = []
+    for f in fragments:
+        f = f.strip()
+        if f and f not in seen:
+            seen.add(f)
+            unique.append(f)
+    text = '. '.join(unique)
+    
+    # Final cleanup
+    text = re.sub(r'\s+', ' ', text)  # Normalize spaces
+    text = re.sub(r'\s*([.,!?])\s*', r'\1 ', text)  # Fix punctuation spacing
+    text = re.sub(r'[.,!?]\s+(?=[.,!?])', '', text)  # Remove redundant punctuation
+    
+    return text.strip()
+
+def clean_text(text, clean_transcripts=False):
     """Clean up text by removing unwanted UI elements and formatting."""
     if not text:
         return ''
@@ -29,7 +75,13 @@ def clean_text(text):
     
     # Clean up extra whitespace
     text = re.sub(r'\s+', ' ', text)
-    return text.strip()
+    text = text.strip()
+    
+    # If this looks like a muddled transcript and cleaning is enabled, clean it up
+    if clean_transcripts and is_muddled_transcript(text):
+        text = clean_muddled_text(text)
+        
+    return text
 
 def should_skip_element(tag):
     """Determine if an element should be skipped in the conversion."""
@@ -53,7 +105,7 @@ def should_skip_element(tag):
         
     return False
 
-def html_to_markdown(html_content):
+def html_to_markdown(html_content, clean_transcripts=False):
     soup = BeautifulSoup(html_content, 'html.parser')
     
     # Remove unwanted elements
@@ -62,7 +114,7 @@ def html_to_markdown(html_content):
     
     def process_tag(tag):
         if isinstance(tag, NavigableString):
-            return clean_text(tag.string) if tag.string else ''
+            return clean_text(tag.string, clean_transcripts=clean_transcripts) if tag.string else ''
         
         if should_skip_element(tag):
             return ''
@@ -140,10 +192,10 @@ def save_markdown(content, filename):
     with open(filename, 'w', encoding='utf-8') as file:
         file.write(content)
 
-def url_to_markdown(url):
+def url_to_markdown(url, clean_transcripts=False):
     html_content = download_content(url)
     if html_content:
-        markdown_content = html_to_markdown(html_content)
+        markdown_content = html_to_markdown(html_content, clean_transcripts=clean_transcripts)
         return markdown_content
     return None
 
@@ -160,13 +212,13 @@ def get_output_filename(url, output_dir):
     
     return os.path.join(output_dir, filename)
 
-def main(url):
+def main(url, clean_transcripts=False):
     url_parts = urlparse(url)
     domain = url_parts.netloc
     date_dir = datetime.now().strftime('%Y-%m-%d')
     output_dir = os.path.join(BASE_OUTPUT_DIR, date_dir, domain)
 
-    markdown_content = url_to_markdown(url)
+    markdown_content = url_to_markdown(url, clean_transcripts=clean_transcripts)
     if markdown_content:
         filename = get_output_filename(url, output_dir)
         save_markdown(markdown_content, filename)
@@ -177,8 +229,9 @@ def main(url):
 if __name__ == '__main__':
     import sys
     if len(sys.argv) < 2:
-        print("Usage: python web2md.py <URL>")
+        print("Usage: python web2md.py <URL> [--clean-transcripts]")
         sys.exit(1)
 
     input_url = sys.argv[1]
-    main(input_url)
+    clean_transcripts = '--clean-transcripts' in sys.argv
+    main(input_url, clean_transcripts)

@@ -56,10 +56,14 @@ Web2MD is a Python script that downloads a web page and converts it into a Markd
 Ensure your virtual environment is activated, then run the script with:
 
 ```bash
-python web2md.py <URL>
+python web2md.py <URL> [--clean-transcripts]
 ```
 
-Replace `<URL>` with the web page you want to convert. The script will:
+Replace `<URL>` with the web page you want to convert. Options:
+
+- `--clean-transcripts`: Optional. Attempts to clean up and format transcript-style text that may be mangled in the conversion process. This is particularly useful for podcast transcripts or interview content.
+
+The script will:
 
 1. Download the specified web page.
 2. Convert the HTML content to Markdown.
