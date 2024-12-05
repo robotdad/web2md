@@ -14,16 +14,60 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 BASE_OUTPUT_DIR = os.getenv('BASE_OUTPUT_DIR', os.path.join(os.getcwd(), 'output'))
 logging.debug(f"BASE_OUTPUT_DIR: {BASE_OUTPUT_DIR}")
 
+def clean_text(text):
+    """Clean up text by removing unwanted UI elements and formatting."""
+    if not text:
+        return ''
+    # Remove social media related text
+    text = re.sub(r'Copy link(?:Facebook|Email|Notes|More|\s)*', '', text)
+    
+    # Remove audio player text
+    text = re.sub(r'Audio playback is not supported.*upgrade\.', '', text)
+    
+    # Remove current time/total time text
+    text = re.sub(r'\d+:\d+:\d+Current time:.*?Total time:.*?\d+:\d+:\d+', '', text)
+    
+    # Clean up extra whitespace
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+def should_skip_element(tag):
+    """Determine if an element should be skipped in the conversion."""
+    # Skip script and style tags
+    if tag.name in ['script', 'style']:
+        return True
+    
+    # Skip JSON-LD content
+    if tag.get('type') == 'application/ld+json':
+        return True
+        
+    # Skip social sharing buttons and UI elements
+    classes = tag.get('class', [])
+    if any(c in str(classes) for c in ['share-button', 'social-links', 'player-controls']):
+        return True
+        
+    return False
+
 def html_to_markdown(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
     
-    # Function to convert a tag and its contents to markdown
+    # Remove unwanted elements
+    for element in soup.find_all(should_skip_element):
+        element.decompose()
+    
     def process_tag(tag):
         if isinstance(tag, NavigableString):
-            return tag.string
+            return clean_text(tag.string) if tag.string else ''
+        
+        if should_skip_element(tag):
+            return ''
         
         if tag.name == 'a':
-            href = tag.get('href')
+            href = tag.get('href', '')
+            # Skip processing if href contains javascript: or void(0)
+            if 'javascript:' in href or 'void(0)' in href:
+                return ''
+                
             # Check if the link contains an image
             img = tag.find('img')
             if img:
@@ -41,17 +85,20 @@ def html_to_markdown(html_content):
         elif tag.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
             level = int(tag.name[1])
             content = ''.join(process_tag(child) for child in tag.contents)
-            return f"\n\n{'#' * level} {content.strip()}\n\n"
+            return f"\n\n{'#' * level} {clean_text(content)}\n\n"
         elif tag.name == 'p':
             content = ''.join(process_tag(child) for child in tag.contents)
-            return f"\n\n{content}\n\n"
+            cleaned_content = clean_text(content)
+            return f"\n\n{cleaned_content}\n\n" if cleaned_content else ''
         elif tag.name in ['ul', 'ol']:
             items = []
             for i, li in enumerate(tag.find_all('li', recursive=False)):
                 marker = '*' if tag.name == 'ul' else f"{i+1}."
                 content = ''.join(process_tag(child) for child in li.contents)
-                items.append(f"{marker} {content.strip()}")
-            return '\n' + '\n'.join(items) + '\n'
+                cleaned_content = clean_text(content)
+                if cleaned_content:
+                    items.append(f"{marker} {cleaned_content}")
+            return '\n' + '\n'.join(items) + '\n' if items else ''
         elif tag.name == 'br':
             return '\n'
         else:
@@ -92,6 +139,19 @@ def url_to_markdown(url):
         return markdown_content
     return None
 
+def get_output_filename(url, output_dir):
+    """Determine the output filename based on the URL."""
+    url_parts = urlparse(url)
+    path_parts = url_parts.path.strip('/').split('/')
+    
+    # If the path ends with a specific identifier (not 'index'), use that
+    if path_parts and path_parts[-1] != 'index':
+        filename = f"{path_parts[-1]}.md"
+    else:
+        filename = 'index.md'
+    
+    return os.path.join(output_dir, filename)
+
 def main(url):
     url_parts = urlparse(url)
     domain = url_parts.netloc
@@ -100,7 +160,7 @@ def main(url):
 
     markdown_content = url_to_markdown(url)
     if markdown_content:
-        filename = os.path.join(output_dir, 'index.md')
+        filename = get_output_filename(url, output_dir)
         save_markdown(markdown_content, filename)
         print(f"Markdown saved to: {filename}")
     else:
