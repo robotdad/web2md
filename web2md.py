@@ -115,6 +115,9 @@ def html_to_markdown(html_content):
     markdown_content = re.sub(r'\n\s*\n', '\n\n', markdown_content)
     markdown_content = markdown_content.strip()
 
+    # Add space before [ if it's not a markdown link/image and no space exists
+    markdown_content = re.sub(r'([^\s\[!])\[(?!\])', r'\1 [', markdown_content)
+
     return markdown_content
 
 def download_content(url):
